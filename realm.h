@@ -130,48 +130,47 @@ void* realm_put (realm_t* r, int mode, int n, const void* key,
     /* Key exists */
     if (*pp != NULL) {
         realm_entry* e = *pp;
-        if (mode == '!') {
-            assert(0 && "realm: exclusive key exists");
-            return NULL;
-        } else if (mode == '=') {
-            return e->value;
-        } else {
-            void* nv = (alloc != NULL)
-                ? alloc(n, key, ctx)
-                : ctx;
-            if (e->free != NULL) {
-                e->free(e->n, e->key, e->value);
+        switch (mode) {
+            case '!':
+                assert(0 && "realm: exclusive key exists");
+                return NULL;
+            case '=':
+                return e->value;
+            case '~': {
+                void* nv = (alloc != NULL) ? alloc(n, key, ctx) : ctx;
+                if (e->free != NULL) {
+                    e->free(e->n, e->key, e->value);
+                }
+                e->depth = r->depth - 1;
+                e->value = nv;
+                e->free = free_;
+                return nv;
             }
-            e->depth = r->depth - 1;
-            e->value = nv;
-            e->free = free_;
-            return nv;
+            default: assert(0 && "bug found");
         }
     }
 
     /* Key does not exist: create */
-    void* nv = (alloc != NULL)
-        ? alloc(n, key, ctx)
-        : ctx;
-    realm_entry* e = (realm_entry*)malloc(
-        sizeof(realm_entry)
-    );
-    if (e == NULL) {
-        return NULL;
+    else {
+        void* nv = (alloc != NULL) ? alloc(n, key, ctx) : ctx;
+        realm_entry* e = malloc(sizeof(realm_entry));
+        if (e == NULL) {
+            return NULL;
+        }
+        e->key = malloc(n);
+        if (e->key == NULL) {
+            free(e);
+            return NULL;
+        }
+        memcpy(e->key, key, n);
+        e->n = n;
+        e->value = nv;
+        e->depth = r->depth - 1;
+        e->free = free_;
+        e->next = NULL;
+        *pp = e;
+        return nv;
     }
-    e->key = malloc(n);
-    if (e->key == NULL) {
-        free(e);
-        return NULL;
-    }
-    memcpy(e->key, key, n);
-    e->n = n;
-    e->value = nv;
-    e->depth = r->depth - 1;
-    e->free = free_;
-    e->next = NULL;
-    *pp = e;
-    return nv;
 }
 
 void* realm_get (realm_t* r, int n, const void* key) {
