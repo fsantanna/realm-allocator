@@ -3,127 +3,123 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
-#include <time.h>
 
-/* Simulates a cache for session data with TTL expiration */
+/* Simulates a game with scene-based resource management */
 
 typedef struct {
-    int session_id;
-    char username[32];
-} session_t;
+    int id;
+    char name[32];
+} resource_t;
 
-static int expired_count = 0;
+static int freed_count = 0;
 
-static void session_cleanup(int n, const void* key, void* value) {
-    session_t* session = (session_t*)value;
-    printf("  [cleanup] session expired: id=%d key=%.*s user=%s\n",
-           session->session_id, n, (const char*)key, session->username);
-    free(session);
-    expired_count++;
+static void resource_free (int n, const void* key,
+                           void* value) {
+    resource_t* res = (resource_t*)value;
+    printf("  [free] id=%d key=%.*s name=%s\n",
+           res->id, n, (const char*)key, res->name);
+    free(res);
+    freed_count++;
 }
 
-static session_t* create_session(int id, const char* username) {
-    session_t* s = (session_t*)malloc(sizeof(session_t));
-    s->session_id = id;
-    snprintf(s->username, sizeof(s->username), "%s", username);
-    return s;
+static resource_t* create_resource (int id,
+                                    const char* name) {
+    resource_t* r = (resource_t*)malloc(sizeof(resource_t));
+    r->id = id;
+    snprintf(r->name, sizeof(r->name), "%s", name);
+    return r;
 }
 
-int main(void) {
-    printf("=== Realm Session Cache Simulation ===\n\n");
+int main (void) {
+    printf("=== Realm Scene Demo ===\n\n");
 
-    realm* cache = realm_open(16, 3, session_cleanup);
-    int session_id = 1000;
+    realm_t* r = realm_open(16);
+    int next_id = 1;
 
-    /* Simulation loop: 10 ticks */
-    for (int tick = 1; tick <= 10; tick++) {
-        printf("--- Tick %d ---\n", tick);
+    /* Depth 1: global resources */
+    printf("--- Enter global realm ---\n");
+    realm_enter(r);
 
-        /* Add new sessions on certain ticks */
-        if (tick == 1) {
-            session_t* s1 = create_session(session_id++, "alice");
-            assert(realm_put(cache, 6, "sess_a", s1) != NULL);
-            printf("  [put] added session for alice\n");
+    resource_t* font = create_resource(next_id++, "font");
+    realm_put(r, '!', 4, "font",
+              resource_free, NULL, font);
+    printf("  [put] font (global)\n");
 
-            session_t* s2 = create_session(session_id++, "bob");
-            assert(realm_put(cache, 6, "sess_b", s2) != NULL);
-            printf("  [put] added session for bob\n");
+    resource_t* conf = create_resource(next_id++, "config");
+    realm_put(r, '!', 6, "config",
+              resource_free, NULL, conf);
+    printf("  [put] config (global)\n");
 
-            assert(realm_get(cache, 6, "sess_a") == s1);
-            assert(realm_get(cache, 6, "sess_b") == s2);
-        }
+    /* Depth 2: scene 1 */
+    printf("\n--- Enter scene 1 ---\n");
+    realm_enter(r);
 
-        if (tick == 3) {
-            session_t* s3 = create_session(session_id++, "carol");
-            assert(realm_put(cache, 6, "sess_c", s3) != NULL);
-            printf("  [put] added session for carol\n");
-            assert(realm_get(cache, 6, "sess_c") == s3);
-        }
+    resource_t* tex_a = create_resource(next_id++, "sky");
+    realm_put(r, '!', 3, "sky",
+              resource_free, NULL, tex_a);
+    printf("  [put] sky texture\n");
 
-        if (tick == 5) {
-            session_t* s4 = create_session(session_id++, "dave");
-            assert(realm_put(cache, 6, "sess_d", s4) != NULL);
-            printf("  [put] added session for dave\n");
-            assert(realm_get(cache, 6, "sess_d") == s4);
-        }
+    resource_t* snd_a = create_resource(next_id++, "wind");
+    realm_put(r, '!', 4, "wind",
+              resource_free, NULL, snd_a);
+    printf("  [put] wind sound\n");
 
-        /* Simulate accessing alice's session to keep it alive */
-        if (tick == 2 || tick == 4 || tick == 6 || tick == 8) {
-            session_t* s = (session_t*)realm_get(cache, 6, "sess_a");
-            assert(s != NULL);
-            printf("  [get] accessed alice's session (ttl reset)\n");
-        }
+    /* Globals still accessible */
+    assert(realm_get(r, 4, "font") == font);
+    assert(realm_get(r, 6, "config") == conf);
+    printf("  [get] globals accessible from scene 1\n");
 
-        /* Simulate explicit logout for bob */
-        if (tick == 3) {
-            assert(realm_rem(cache, 6, "sess_b") == 0);
-            printf("  [rem] bob logged out explicitly\n");
-            assert(realm_get(cache, 6, "sess_b") == NULL);
-        }
+    /* Depth 3: dialog within scene 1 */
+    printf("\n--- Enter dialog ---\n");
+    realm_enter(r);
 
-        /* Check who is still active */
-        printf("  [status] active sessions: ");
-        int active = 0;
-        void* alice = realm_get(cache, 6, "sess_a");
-        void* bob = realm_get(cache, 6, "sess_b");
-        void* carol = realm_get(cache, 6, "sess_c");
-        void* dave = realm_get(cache, 6, "sess_d");
+    resource_t* btn = create_resource(next_id++, "button");
+    realm_put(r, '!', 6, "button",
+              resource_free, NULL, btn);
+    printf("  [put] button texture\n");
 
-        if (alice != NULL) { printf("alice "); active++; }
-        if (bob != NULL) { printf("bob "); active++; }
-        if (carol != NULL) { printf("carol "); active++; }
-        if (dave != NULL) { printf("dave "); active++; }
-        if (active == 0) printf("(none)");
-        printf("\n");
+    /* Leave dialog */
+    printf("\n--- Leave dialog ---\n");
+    realm_leave(r);
+    assert(realm_get(r, 6, "button") == NULL);
+    assert(realm_get(r, 3, "sky") == tex_a);
+    printf("  dialog resources freed, scene 1 intact\n");
 
-        /* Verify expected states at specific ticks */
-        if (tick == 1) {
-            assert(alice != NULL && bob != NULL);
-            assert(carol == NULL && dave == NULL);
-        }
-        if (tick == 3) {
-            assert(alice != NULL && carol != NULL);
-            assert(bob == NULL);
-        }
-        if (tick == 5) {
-            assert(alice != NULL && carol != NULL && dave != NULL);
-            assert(bob == NULL);
-        }
-        if (tick >= 8) {
-            assert(alice != NULL);
-        }
+    /* Leave scene 1 */
+    printf("\n--- Leave scene 1 ---\n");
+    realm_leave(r);
+    assert(realm_get(r, 3, "sky") == NULL);
+    assert(realm_get(r, 4, "wind") == NULL);
+    assert(realm_get(r, 4, "font") == font);
+    printf("  scene 1 resources freed, globals intact\n");
 
-        /* Advance time */
-        realm_tick(cache);
-        printf("\n");
-    }
+    /* Depth 2: scene 2 */
+    printf("\n--- Enter scene 2 ---\n");
+    realm_enter(r);
 
-    printf("--- Closing cache ---\n");
-    realm_close(cache);
+    resource_t* tex_b = create_resource(next_id++, "lava");
+    realm_put(r, '!', 4, "lava",
+              resource_free, NULL, tex_b);
+    printf("  [put] lava texture\n");
+
+    /* Globals still accessible */
+    assert(realm_get(r, 4, "font") == font);
+    printf("  [get] globals still accessible\n");
+
+    /* Leave scene 2 */
+    printf("\n--- Leave scene 2 ---\n");
+    realm_leave(r);
+    assert(realm_get(r, 4, "lava") == NULL);
+    assert(realm_get(r, 4, "font") == font);
+    printf("  scene 2 resources freed, globals intact\n");
+
+    /* Close: frees globals */
+    printf("\n--- Close ---\n");
+    realm_close(r);
 
     printf("\n=== Summary ===\n");
-    printf("Total sessions expired/cleaned: %d\n", expired_count);
-    assert(expired_count == 4);
+    printf("Total resources freed: %d\n", freed_count);
+    assert(freed_count == 6);
 
     printf("\nAll assertions passed!\n");
     return 0;

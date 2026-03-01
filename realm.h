@@ -3,30 +3,37 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
-typedef void (*cb_clean_t) (int n, const void* key, void* value);
+typedef void  (*realm_free_t)  (int n, const void* key, void* value);
+typedef void* (*realm_alloc_t) (int n, const void* key, void* ctx);
+
+#define REALM_EXCLUSIVE   '!'
+#define REALM_SHARED      '='
+#define REALM_REPLACEABLE '~'
 
 typedef struct realm_entry {
-    int n;
-    void* key;
-    void* value;
-    int ttl;
+    int                 n;
+    void*               key;
+    void*               value;
+    int                 depth;
+    realm_free_t        free;
     struct realm_entry* next;
 } realm_entry;
 
 typedef struct {
-    int n_buk;
-    int n_ttl;
-    cb_clean_t clean;
-    realm_entry** buckets;
-} realm;
+    int            n;
+    realm_entry**  entries;
+    int            depth;
+} realm_t;
 
-realm* realm_open  (int n_buk, int n_ttl, cb_clean_t f);
-void      realm_close (realm* ht);
-const void* realm_put (realm* ht, int n, const void* key, void* value);
-void*     realm_get   (realm* ht, int n, const void* key);
-int       realm_rem   (realm* ht, int n, const void* key);
-void      realm_tick  (realm* ht);
+realm_t* realm_open  (int n);
+void     realm_close (realm_t* r);
+void     realm_enter (realm_t* r);
+void     realm_leave (realm_t* r);
+void*    realm_put   (realm_t* r, int mode, int n, const void* key,
+                      realm_free_t free, realm_alloc_t alloc, void* ctx);
+void*    realm_get   (realm_t* r, int n, const void* key);
 
 #endif
 
@@ -42,11 +49,11 @@ static unsigned long realm_djb2 (int n, const void* key) {
     return hash;
 }
 
-/* Find entry in bucket chain, return pointer to the link pointing to it */
-static realm_entry** realm_find (realm* ht, int n, const void* key) {
+/* Find entry in bucket chain */
+static realm_entry** realm_find (realm_t* r, int n, const void* key) {
     unsigned long hash = realm_djb2(n, key);
-    int idx = hash % ht->n_buk;
-    realm_entry** pp = &ht->buckets[idx];
+    int idx = hash % r->n;
+    realm_entry** pp = &r->entries[idx];
     while (*pp != NULL) {
         realm_entry* e = *pp;
         if (e->n == n && memcmp(e->key, key, n) == 0) {
@@ -57,59 +64,98 @@ static realm_entry** realm_find (realm* ht, int n, const void* key) {
     return pp;
 }
 
-/* Remove entry and call cleanup callback */
-static void realm_remove_entry (realm* ht, realm_entry** pp) {
+/* Remove entry and call per-entry free callback */
+static void realm_remove_entry (realm_entry** pp) {
     realm_entry* e = *pp;
     *pp = e->next;
-    if (ht->clean != NULL) {
-        ht->clean(e->n, e->key, e->value);
+    if (e->free != NULL) {
+        e->free(e->n, e->key, e->value);
     }
     free(e->key);
     free(e);
 }
 
-realm* realm_open (int n_buk, int n_ttl, cb_clean_t f) {
-    realm* ht = malloc(sizeof(realm));
-    if (ht == NULL) {
+realm_t* realm_open (int n) {
+    realm_t* r = malloc(sizeof(realm_t));
+    if (r == NULL) {
         return NULL;
     }
-    ht->buckets = calloc(n_buk, sizeof(realm_entry*));
-    if (ht->buckets == NULL) {
-        free(ht);
+    r->entries = calloc(n, sizeof(realm_entry*));
+    if (r->entries == NULL) {
+        free(r);
         return NULL;
     }
-    ht->n_buk = n_buk;
-    ht->n_ttl = n_ttl;
-    ht->clean = f;
-    return ht;
+    r->n = n;
+    r->depth = 0;
+    return r;
 }
 
-void realm_close (realm* ht) {
-    for (int i = 0; i < ht->n_buk; i++) {
-        while (ht->buckets[i] != NULL) {
-            realm_remove_entry(ht, &ht->buckets[i]);
+void realm_close (realm_t* r) {
+    for (int i = 0; i < r->n; i++) {
+        while (r->entries[i] != NULL) {
+            realm_remove_entry(&r->entries[i]);
         }
     }
-    free(ht->buckets);
-    free(ht);
+    free(r->entries);
+    free(r);
 }
 
-const void* realm_put (realm* ht, int n, const void* key, void* value) {
-    realm_entry** pp = realm_find(ht, n, key);
+void realm_enter (realm_t* r) {
+    r->depth++;
+}
 
-    /* Key exists: replace value */
+void realm_leave (realm_t* r) {
+    assert(r->depth > 0);
+    r->depth--;
+    for (int i = 0; i < r->n; i++) {
+        realm_entry** pp = &r->entries[i];
+        while (*pp != NULL) {
+            if ((*pp)->depth == r->depth) {
+                realm_remove_entry(pp);
+            } else {
+                pp = &(*pp)->next;
+            }
+        }
+    }
+}
+
+void* realm_put (realm_t* r, int mode, int n, const void* key,
+                 realm_free_t free_, realm_alloc_t alloc, void* ctx) {
+    assert(r->depth > 0);
+    if (mode == '=') {
+        assert(alloc != NULL);
+    }
+    realm_entry** pp = realm_find(r, n, key);
+
+    /* Key exists */
     if (*pp != NULL) {
         realm_entry* e = *pp;
-        if (ht->clean != NULL) {
-            ht->clean(e->n, e->key, e->value);
+        if (mode == '!') {
+            assert(0 && "realm: exclusive key exists");
+            return NULL;
+        } else if (mode == '=') {
+            return e->value;
+        } else {
+            void* nv = (alloc != NULL)
+                ? alloc(n, key, ctx)
+                : ctx;
+            if (e->free != NULL) {
+                e->free(e->n, e->key, e->value);
+            }
+            e->depth = r->depth - 1;
+            e->value = nv;
+            e->free = free_;
+            return nv;
         }
-        e->value = value;
-        e->ttl = ht->n_ttl;
-        return e->key;
     }
 
-    /* Key does not exist: create new entry */
-    realm_entry* e = (realm_entry*)malloc(sizeof(realm_entry));
+    /* Key does not exist: create */
+    void* nv = (alloc != NULL)
+        ? alloc(n, key, ctx)
+        : ctx;
+    realm_entry* e = (realm_entry*)malloc(
+        sizeof(realm_entry)
+    );
     if (e == NULL) {
         return NULL;
     }
@@ -120,44 +166,20 @@ const void* realm_put (realm* ht, int n, const void* key, void* value) {
     }
     memcpy(e->key, key, n);
     e->n = n;
-    e->value = value;
-    e->ttl = ht->n_ttl;
+    e->value = nv;
+    e->depth = r->depth - 1;
+    e->free = free_;
     e->next = NULL;
     *pp = e;
-    return e->key;
+    return nv;
 }
 
-void* realm_get (realm* ht, int n, const void* key) {
-    realm_entry** pp = realm_find(ht, n, key);
+void* realm_get (realm_t* r, int n, const void* key) {
+    realm_entry** pp = realm_find(r, n, key);
     if (*pp == NULL) {
         return NULL;
-    }
-    realm_entry* e = *pp;
-    e->ttl = ht->n_ttl;
-    return e->value;
-}
-
-int realm_rem (realm* ht, int n, const void* key) {
-    realm_entry** pp = realm_find(ht, n, key);
-    if (*pp == NULL) {
-        return -1;
-    }
-    realm_remove_entry(ht, pp);
-    return 0;
-}
-
-void realm_tick (realm* ht) {
-    for (int i = 0; i < ht->n_buk; i++) {
-        realm_entry** pp = &ht->buckets[i];
-        while (*pp != NULL) {
-            realm_entry* e = *pp;
-            e->ttl--;
-            if (e->ttl <= 0) {
-                realm_remove_entry(ht, pp);
-            } else {
-                pp = &e->next;
-            }
-        }
+    } else {
+        return (*pp)->value;
     }
 }
 

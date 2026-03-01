@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Realm is a single-header C library implementing a hash table with time-to-live key-value pairs, designed for caching use cases. See README.md for the full API specification.
+Realm is a single-header C library implementing a stack-based resource allocator that groups keyed resources by depth, enabling bulk-free when a scope ends. See README.md for the full API specification.
 
 ## Project Structure
 
 - `realm.h` - Single-header library (header + implementation)
 - `hello.c` - Minimal usage example
 - `tst/unit.c` - Unit tests for all APIs
-- `tst/app.c` - Session cache simulation demonstrating recurrent usage
+- `tst/app.c` - Scene-based resource management demo
 - `tst/bench.c` - Complexity benchmark proving O(1) hash table vs O(n) linked list
 - `Makefile` - Build configuration
 

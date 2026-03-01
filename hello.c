@@ -3,26 +3,30 @@
 #define REALM_C
 #include "realm.h"
 
-int main(void) {
-    realm* ht = realm_open(16, 3, NULL);
+int main (void) {
+    realm_t* r = realm_open(16);
 
-    int value1 = 42;
-    int value2 = 99;
+    realm_enter(r);
+    {
+        int value1 = 42;
+        int value2 = 99;
 
-    realm_put(ht, 5, "hello", &value1);
-    realm_put(ht, 5, "world", &value2);
+        realm_put(r, '!', 5, "hello",
+                  NULL, NULL, &value1);
+        realm_put(r, '!', 5, "world",
+                  NULL, NULL, &value2);
 
-    int* v = (int*)realm_get(ht, 5, "hello");
-    printf("hello = %d\n", *v);
+        int* v = (int*)realm_get(r, 5, "hello");
+        printf("hello = %d\n", *v);
+    }
+    realm_leave(r);
 
-    realm_tick(ht);
-    realm_tick(ht);
-    realm_tick(ht);
-
-    if (realm_get(ht, 5, "hello") == NULL) {
-        printf("hello expired\n");
+    if (realm_get(r, 5, "hello") == NULL) {
+        printf("hello freed by realm_leave\n");
+    } else {
+        printf("ERROR: hello still exists\n");
     }
 
-    realm_close(ht);
+    realm_close(r);
     return 0;
 }
