@@ -83,7 +83,7 @@ make tests  # runs tests with valgrind
     - Return:
         - `void*` | newly created value
 
-## Mode Defines
+## Collision Modes
 
 ```c
 #define REALM_EXCLUSIVE   '!'   // assert if key exists
@@ -91,20 +91,20 @@ make tests  # runs tests with valgrind
 #define REALM_REPLACEABLE '~'   // free old + store new
 ```
 
-## 3-Mode Put Matrix
+### Put Behavior
 
-| Mode | If key exists | If key not exists |
-|------|---------------|-------------------|
-| `'!'` Exclusive | assert (bug) | create |
-| `'='` Shared | return existing | create via alloc |
-| `'~'` Replaceable | free old + create new | create |
+| Sym | Mode        | key exists            | key not exists    |
+|-----|-------------|-----------------------|-------------------|
+| `!` | Exclusive   | assert (bug)          | create            |
+| `=` | Shared      | return existing       | create via alloc  |
+| `~` | Replaceable | free old + create new | create            |
 
-When `alloc != NULL`, `ctx` serves as context and `alloc(n, key, ctx)`
-creates the resource. When `alloc == NULL`, `ctx` is the resource directly.
-Mode `'='` requires `alloc != NULL`.
+When `alloc!=NULL`, `ctx` serves as context and `alloc(n, key, ctx)` creates
+the resource. When `alloc==NULL`, `ctx` is the resource directly.
+Mode `'='` requires `alloc!=NULL`.
 
-The `free` callback is stored per-entry and called on eviction
-(`realm_leave`, `realm_close`, or `'~'` replacement).
+The `free` callback is stored per-entry and called on eviction (`realm_leave`,
+`realm_close`, or `'~'` replacement).
 `free` may be `NULL` (no cleanup needed).
 
 ## Functions
