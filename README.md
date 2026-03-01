@@ -2,8 +2,8 @@
 
 [![Tests][badge]][test]
 
-[badge]: https://github.com/fsantanna/realm/actions/workflows/test.yml/badge.svg
-[test]:  https://github.com/fsantanna/realm/actions/workflows/test.yml
+[badge]: https://github.com/fsantanna/realm-allocator/actions/workflows/test.yml/badge.svg
+[test]:  https://github.com/fsantanna/realm-allocator/actions/workflows/test.yml
 
 `Realm` is a stack-based resource allocator that groups keyed resources by
 depth, enabling bulk-free when a scope ends.
